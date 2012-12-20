@@ -260,3 +260,19 @@ def get_config(config_file):
     config['plugins'] = plugins
     config['sockets'] = sockets
     return config
+
+
+def changed_config_keys(obj, config, checks):
+    r = []
+    for (key, check, default) in checks:
+        if isinstance(check, basestring):
+            value = getattr(obj, check)
+        elif hasattr(check, '__call__'):
+            value = check(obj)
+        else:
+            value = object()
+
+        if value != config.get(key, default):
+            r.append(key)
+
+    return r

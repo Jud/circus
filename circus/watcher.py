@@ -684,21 +684,24 @@ class Watcher(object):
         self.notify_event("reload", {"time": time.time()})
         logger.info('%s reloaded', self.name)
 
+    def set_numprocesses(self, np):
+        if self.singleton and np != 1:
+            raise ValueError('Singleton watcher has a single process')
+        if np < 0:
+            np = 0
+
+        self.numprocesses = np
+        self.manage_processes()
+
+        return self.numprocesses
+
     @util.debuglog
     def incr(self, nb=1):
-        if self.singleton and self.numprocesses == 1:
-            raise ValueError('Singleton watcher has a single process')
-
-        self.numprocesses += nb
-        self.manage_processes()
-        return self.numprocesses
+        return self.set_numprocesses(self.numprocesses + nb)
 
     @util.debuglog
     def decr(self, nb=1):
-        if self.numprocesses > 0:
-            self.numprocesses -= nb
-            self.manage_processes()
-        return self.numprocesses
+        return self.set_numprocesses(self.numprocesses - nb)
 
     def set_opt(self, key, val):
         """Set a watcher option.
