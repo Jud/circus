@@ -2,6 +2,7 @@ import errno
 import logging
 import os
 from threading import Thread, RLock
+from thread import get_ident
 import time
 import sys
 
@@ -290,9 +291,6 @@ class Arbiter(object):
     def load_from_config(cls, config_file):
         cfg = get_config(config_file)
 
-        # hack reload ioloop to use the monkey patched version
-        reload(ioloop)
-
         watchers = []
         for watcher in cfg.get('watchers', []):
             watchers.append(Watcher.load_from_config(watcher))
@@ -542,4 +540,5 @@ class ThreadedArbiter(Arbiter, Thread):
 
     def stop(self):
         Arbiter.stop(self)
-        self.join()
+        if get_ident() != self.ident:
+            self.join()
