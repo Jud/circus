@@ -91,6 +91,18 @@ class CircusSocket(socket.socket):
                                                       self.fileno()))
 
     @classmethod
+    def cfg2dict(cls, cfg):
+        return {
+                  'host': cfg.get('host', 'localhost'),
+                  'port': int(cfg.get('port', '8080')),
+                  'path': cfg.get('path'),
+                  'family': _FAMILY[cfg.get('family', 'AF_INET').upper()],
+                  'type': _TYPE[cfg.get('type', 'SOCK_STREAM').upper()],
+                  'backlog': int(cfg.get('backlog', 2048)),
+                  'proto': cfg.get('proto'),
+                  }
+
+    @classmethod
     def load_from_config(cls, config):
         params = {'name': config['name'],
                   'host': config.get('host', 'localhost'),
@@ -102,7 +114,12 @@ class CircusSocket(socket.socket):
         proto_name = config.get('proto')
         if proto_name is not None:
             params['proto'] = socket.getprotobyname(proto_name)
-        return cls(**params)
+        s = cls(**params)
+
+        # store the config for later checking if condig has changed
+        s.cfg = cls.cfg2dict(config)
+
+        return s
 
 
 class CircusSockets(dict):
@@ -132,7 +149,6 @@ class CircusSockets(dict):
     def close_all(self):
         for sock in self.values():
             sock.close()
-
 
     def bind_and_listen_all(self):
         for sock in self.values():

@@ -29,4 +29,6 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(len(a.watchers), 2)
         a.reload_from_config(_CONF['reload3'])
         self.assertEqual(len(a.watchers), 1)
+
+        a.evpub_socket.close()
         a.stop()

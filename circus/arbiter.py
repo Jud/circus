@@ -14,7 +14,7 @@ from circus.exc import AlreadyExist
 from circus import logger
 from circus.watcher import Watcher
 from circus.util import debuglog, _setproctitle
-from circus.config import get_config, changed_config_keys
+from circus.config import get_config
 from circus.plugins import get_plugin_cmd
 from circus.sockets import CircusSocket, CircusSockets
 
@@ -170,35 +170,29 @@ class Arbiter(object):
                 return i
         return None
 
+    @classmethod
+    def cfg2dict(cls, cfg):
+        return dict(
+            endpoint=cfg['endpoint'],
+            pubsub_endpoint=cfg['pubsub_endpoint'],
+            check_delay=cfg.get('check_delay', 1.),
+            prereload_fn=cfg.get('prereload_fn'),
+            stats_endpoint=cfg.get('stats_endpoint'),
+            plugins=cfg.get('plugins'),
+            warmup_delay=cfg.get('warmup_delay', 0),
+            httpd=cfg.get('httpd', False),
+            httpd_host=cfg.get('httpd_host', 'localhost'),
+            httpd_port=cfg.get('httpd_port', 8080),
+            debug=cfg.get('debug', False),
+            stream_backend=cfg.get('stream_backend', 'thread'),
+            ssh_server=cfg.get('ssh_server', None),
+    )
+
     def reload_from_config(self, config_file=None):
         cfg = get_config(config_file if config_file else self.config_file)
 
-        import pdb
-        pdb.set_trace()
-        checks = (
-#                ('endpoint', 'endpoint', None),
-#                ('stream_backend', 'stream_backend', None),
-                ('check_delay', 'check_delay', 1),
-#                ('prereload_fn', 'prereload_fn', None),
-#                ('pubsub_endpoint', 'pubsub_endpoint', None),
-                ('proc_name', 'proc_name', 'circusd'),
-                )
-
-        socket_checks = (
-                ('host', 'host', None),
-                ('port', 'port', None),
-#                ('family', 'family'),
-#                ('type', 'type'),
-                )
-        watcher_checks = (
-                ('cmd', 'cmd', None),
-                ('args', 'args', None),
-                ('shell', 'shell', None),
-                )
-        # TODO check complemeteness
-
         # if arbiter is changed, reload everything
-        if changed_config_keys(self, cfg, checks):
+        if self.cfg2dict(cfg) != self.cfg:
             return self.load_from_config(config_file if config_file else self.config_file)
 
         current_socket_names = set([i.name for i in self.sockets])
@@ -213,7 +207,7 @@ class Arbiter(object):
         # get changed sockets
         for n in maybechanged_socket_names:
             s = self.get_socket(n)
-            if changed_config_keys(s, self.get_socket_config(cfg, n), socket_checks):
+            if s.cfg2dict(self.get_socket_config(cfg, n)) != s.cfg:
                 changed_socket_names.add(n)
 
                 # just delete the socket and add it again
@@ -256,13 +250,12 @@ class Arbiter(object):
         if watcher_names_with_deleted_socket and watcher_names_with_deleted_socket not in new_watcher_names:
             raise ValueError('Watchers %s uses a socket which is deleted' % watcher_names_with_deleted_socket)
 
-
         #get changed watchers
         for n in maybechanged_watcher_names:
             w = self.get_watcher(n)
-            changed_keys = changed_config_keys(w, self.get_watcher_config(cfg, n), watcher_checks)
-            if changed_keys:
-                if changed_keys == 'numprocesses':
+            if w.cfg2dict(self.get_watcher_config(cfg, n)) != w.cfg:
+#                if changed_keys == 'numprocesses':
+                if False:
                     # if only the number of processes is changed, just changes this
                     w.set_numprocesses(int(cfg['numprocesses']))
                 else:
@@ -285,7 +278,6 @@ class Arbiter(object):
             w.start()
             self.watchers.append(w)
             self._watchers_names[w.name.lower()] = w
-
 
     @classmethod
     def load_from_config(cls, config_file):
@@ -312,6 +304,9 @@ class Arbiter(object):
                       debug=cfg.get('debug', False),
                       stream_backend=cfg.get('stream_backend', 'thread'),
                       ssh_server=cfg.get('ssh_server', None))
+
+        # store the cfg which will be used, so it can be used later for checking if the cfg has been changed
+        arbiter.cfg = arbiter.cfg2dict(cfg)
 
         arbiter.config_file = config_file
 

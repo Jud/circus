@@ -274,10 +274,21 @@ class Watcher(object):
         return resolved_hooks
 
     @classmethod
+    def cfg2dict(cls, cfg):
+        return dict(cfg.items())
+
+    @classmethod
     def load_from_config(cls, config):
+        cfgdict = cls.cfg2dict(config)
+
         if 'env' in config:
             config['env'] = parse_env_dict(config['env'])
-        return cls(name=config.pop('name'), cmd=config.pop('cmd'), **config)
+        w = cls(name=config.pop('name'), cmd=config.pop('cmd'), **config)
+
+        # store config for checking later if config has changed
+        w.cfg = cfgdict
+
+        return w
 
     @util.debuglog
     def initialize(self, evpub_socket, sockets, arbiter):
