@@ -57,6 +57,8 @@ class Arbiter(object):
       watcher configuration. (default: thread)
     - **proc_name** -- the arbiter process name
     """
+    restart_after_stop = False
+
     def __init__(self, watchers, endpoint, pubsub_endpoint, check_delay=1.,
                  prereload_fn=None, context=None, loop=None,
                  stats_endpoint=None, plugins=None, sockets=None,
@@ -193,7 +195,7 @@ class Arbiter(object):
 
         # if arbiter is changed, reload everything
         if self.cfg2dict(cfg) != self.cfg:
-            return self.load_from_config(config_file if config_file else self.config_file)
+            return True
 
         current_socket_names = set([i.name for i in self.sockets])
         new_socket_names = set([i['name'] for i in cfg.get('sockets', [])])
@@ -253,11 +255,13 @@ class Arbiter(object):
         #get changed watchers
         for n in maybechanged_watcher_names:
             w = self.get_watcher(n)
-            if w.cfg2dict(self.get_watcher_config(cfg, n)) != w.cfg:
-#                if changed_keys == 'numprocesses':
-                if False:
-                    # if only the number of processes is changed, just changes this
-                    w.set_numprocesses(int(cfg['numprocesses']))
+            new_cfg = w.cfg2dict(self.get_watcher_config(cfg, n))
+            old_cfg = w.cfg2dict(w.cfg)  # cfg2dict is used to make sure a copy is returned
+            if new_cfg != old_cfg:
+                old_cfg['numprocesses'] = new_cfg['numprocesses']
+                if new_cfg == old_cfg:
+                    # if nothing but the number of processes is changed, just changes this
+                    w.set_numprocesses(int(new_cfg['numprocesses']))
                 else:
                     # Other thing are changed. Just delete and add the watcher.
                     changed_watcher_names.add(n)
@@ -278,6 +282,8 @@ class Arbiter(object):
             w.start()
             self.watchers.append(w)
             self._watchers_names[w.name.lower()] = w
+
+        return False
 
     @classmethod
     def load_from_config(cls, config_file):
@@ -376,7 +382,11 @@ class Arbiter(object):
             self.ctrl.stop()
             self.evpub_socket.close()
 
-    def stop(self):
+        return self.restart_after_stop
+
+    def stop(self, restart_after_stop=False):
+        self.restart_after_stop = restart_after_stop
+
         if self.alive:
             self.stop_watchers(stop_alive=True)
 

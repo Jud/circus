@@ -17,7 +17,7 @@
     <link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
     <script type="text/javascript" src="/media/socket.io.js"></script>
     <script type="text/javascript" src="/media/jquery.min.js"></script>
-    
+
     <script type="text/javascript" src="/media/rickshaw.min.js"></script>
     <script type="text/javascript" src="/media/d3.v2.js"></script>
     <script type="text/javascript" src="/media/circus.js"></script>
@@ -25,6 +25,9 @@
 <body>
     % if client:
     <div id="overlay" style="display:none;">
+<!--        <div class="overlay">
+            <a><h3>Restart config file</h3></a>
+        </div>-->
         <div class="overlay">
             <div class="dialog-header">
                 <h3>Add Watcher</h3>
@@ -71,7 +74,7 @@
     </header>
     <section id="wrapper">
         % if client:
-            <aside> 
+            <aside>
               <a href="#" class="add_watcher">Add Watcher</a>
               <nav>
                 <ul>
@@ -92,10 +95,10 @@
             </div>
         %endif
         ${self.body()}
-        </section>  
+        </section>
     </section>
 
-    <footer> 
+    <footer>
         &copy; Copyright 2012, The Mozilla Foundation - circushttpd v.${version}
     </footer>
 

@@ -9,7 +9,6 @@ from circus.pidfile import Pidfile
 from circus import __version__
 from circus.util import MAXFD, REDIRECT_TO, configure_logger, LOG_LEVELS
 
-
 def get_maxfd():
     maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
     if (maxfd == resource.RLIM_INFINITY):
@@ -94,13 +93,17 @@ def main():
     configure_logger(logger, args.loglevel, args.logoutput)
 
     # load the arbiter from config
-    arbiter = Arbiter.load_from_config(args.config)
+    arbiter = None
     try:
-        arbiter.start()
+        restart_after_stop = True
+        while restart_after_stop:
+            arbiter = Arbiter.load_from_config(args.config)
+            restart_after_stop = arbiter.start()
     except KeyboardInterrupt:
         pass
     finally:
-        arbiter.stop()
+        if arbiter:
+            arbiter.stop()
         if pidfile is not None:
             pidfile.unlink()
 
