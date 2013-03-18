@@ -1,6 +1,5 @@
 from circus.commands import (   # NOQA
     addwatcher,
-    config,
     decrproc,
     dstats,
     get,
