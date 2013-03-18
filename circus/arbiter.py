@@ -3,8 +3,8 @@ import logging
 import os
 from threading import Thread, RLock
 from thread import get_ident
-import time
 import sys
+from time import sleep
 
 from circus import zmq
 from zmq.eventloop import ioloop
@@ -17,6 +17,8 @@ from circus.util import debuglog, _setproctitle
 from circus.config import get_config
 from circus.plugins import get_plugin_cmd
 from circus.sockets import CircusSocket, CircusSockets
+
+import select
 
 
 class Arbiter(object):
@@ -50,22 +52,16 @@ class Arbiter(object):
     - **httpd_port** -- the circushttpd port (default: 8080)
     - **debug** -- if True, adds a lot of debug info in the stdout (default:
       False)
-    - **stream_backend** -- the backend that will be used for the streaming
-      process. Can be *thread* or *gevent*. When set to *gevent* you need
-      to have *gevent* and *gevent_zmq* installed.
-      All watchers will use this setup unless stated otherwise in the
-      watcher configuration. (default: thread)
     - **proc_name** -- the arbiter process name
     """
-    restart_after_stop = False
 
-    def __init__(self, watchers, endpoint, pubsub_endpoint, check_delay=1.,
+    restart_after_stop = False
+    def __init__(self, watchers, endpoint, pubsub_endpoint, check_delay=.5,
                  prereload_fn=None, context=None, loop=None,
                  stats_endpoint=None, plugins=None, sockets=None,
                  warmup_delay=0, httpd=False, httpd_host='localhost',
-                 httpd_port=8080, debug=False, stream_backend='thread',
-                 ssh_server=None, proc_name='circusd'):
-        self.stream_backend = stream_backend
+                 httpd_port=8080, debug=False, ssh_server=None,
+                 proc_name='circusd'):
         self.watchers = watchers
         self.endpoint = endpoint
         self.check_delay = check_delay
@@ -73,12 +69,11 @@ class Arbiter(object):
         self.pubsub_endpoint = pubsub_endpoint
         self.proc_name = proc_name
 
+        self.ctrl = self.loop = None
+        self.socket_event = False
+
         # initialize zmq context
         self.context = context or zmq.Context.instance()
-        self.loop = loop or ioloop.IOLoop()
-        self.ctrl = Controller(endpoint, self.context, self.loop, self,
-                               check_delay)
-
         self.pid = os.getpid()
         self._watchers_names = {}
         self.alive = True
@@ -105,13 +100,13 @@ class Arbiter(object):
                                     singleton=True,
                                     stdout_stream=stdout_stream,
                                     stderr_stream=stderr_stream,
-                                    stream_backend=self.stream_backend,
                                     copy_env=True, copy_path=True)
+
             self.watchers.append(stats_watcher)
 
         # adding the httpd
         if httpd:
-            cmd = ("%s -c 'from circus.web import circushttpd; "
+            cmd = ("%s -c 'from circusweb import circushttpd; "
                    "circushttpd.main()'") % sys.executable
             cmd += ' --endpoint %s' % self.endpoint
             cmd += ' --fd $(circus.sockets.circushttpd)'
@@ -121,7 +116,6 @@ class Arbiter(object):
                                     singleton=True,
                                     stdout_stream=stdout_stream,
                                     stderr_stream=stderr_stream,
-                                    stream_backend=self.stream_backend,
                                     copy_env=True, copy_path=True)
             self.watchers.append(httpd_watcher)
             httpd_socket = CircusSocket(name='circushttpd', host=httpd_host,
@@ -144,12 +138,14 @@ class Arbiter(object):
                 plugin_watcher = Watcher(name, cmd, priority=1, singleton=True,
                                          stdout_stream=stdout_stream,
                                          stderr_stream=stderr_stream,
-                                         stream_backend=self.stream_backend,
                                          copy_env=True, copy_path=True)
                 self.watchers.append(plugin_watcher)
 
         self.sockets = CircusSockets(sockets)
         self.warmup_delay = warmup_delay
+        self.loop = ioloop.IOLoop.instance()
+        self.ctrl = Controller(self.endpoint, self.context, self.loop, self,
+                               self.check_delay)
 
     def get_socket(self, name):
         for i in self.sockets:
@@ -297,6 +293,16 @@ class Arbiter(object):
         for socket in cfg.get('sockets', []):
             sockets.append(CircusSocket.load_from_config(socket))
 
+        httpd = cfg.get('httpd', False)
+        if httpd:
+            # controlling that we have what it takes to run the web UI
+            # if something is missing this will tell the user
+            try:
+                import circusweb     # NOQA
+            except ImportError:
+                logger.error('You need to install circus-web')
+                sys.exit(1)
+
         # creating arbiter
         arbiter = cls(watchers, cfg['endpoint'], cfg['pubsub_endpoint'],
                       check_delay=cfg.get('check_delay', 1.),
@@ -304,11 +310,10 @@ class Arbiter(object):
                       stats_endpoint=cfg.get('stats_endpoint'),
                       plugins=cfg.get('plugins'), sockets=sockets,
                       warmup_delay=cfg.get('warmup_delay', 0),
-                      httpd=cfg.get('httpd', False),
+                      httpd=httpd,
                       httpd_host=cfg.get('httpd_host', 'localhost'),
                       httpd_port=cfg.get('httpd_port', 8080),
                       debug=cfg.get('debug', False),
-                      stream_backend=cfg.get('stream_backend', 'thread'),
                       ssh_server=cfg.get('ssh_server', None))
 
         # store the cfg which will be used, so it can be used later for checking if the cfg has been changed
@@ -344,6 +349,13 @@ class Arbiter(object):
             self._watchers_names[watcher.name.lower()] = watcher
             watcher.initialize(self.evpub_socket, self.sockets, self)
 
+    def start_watcher(self, watcher):
+        """Aska a specific watcher to start and wait for the specified
+        warmup delay."""
+        if watcher.autostart:
+            watcher.start()
+            sleep(self.warmup_delay)
+
     @debuglog
     def start(self):
         """Starts all the watchers.
@@ -353,18 +365,15 @@ class Arbiter(object):
         processes and restarts them if needed.
         """
         logger.info("Starting master on pid %s", self.pid)
-
         self.initialize()
 
         # start controller
         self.ctrl.start()
-
         try:
             # initialize processes
             logger.debug('Initializing watchers')
             for watcher in self.iter_watchers():
-                watcher.start()
-                time.sleep(self.warmup_delay)
+                self.start_watcher(watcher)
 
             logger.info('Arbiter now waiting for commands')
 
@@ -382,15 +391,14 @@ class Arbiter(object):
             self.ctrl.stop()
             self.evpub_socket.close()
 
-        return self.restart_after_stop
-
     def stop(self, restart_after_stop=False):
         self.restart_after_stop = restart_after_stop
 
         if self.alive:
             self.stop_watchers(stop_alive=True)
 
-        self.loop.stop()
+        if self.loop.running():
+            self.loop.stop()
 
         # close sockets
         self.sockets.close_all()
@@ -416,7 +424,7 @@ class Arbiter(object):
                     watcher.reap_process(pid, status)
             except OSError as e:
                 if e.errno == errno.EAGAIN:
-                    time.sleep(0.001)
+                    sleep(0)
                     continue
                 elif e.errno == errno.ECHILD:
                     # process already reaped
@@ -429,10 +437,20 @@ class Arbiter(object):
             return
 
         with self._lock:
+            need_on_demand = False
             # manage and reap processes
             self.reap_processes()
             for watcher in self.iter_watchers():
+                if watcher.on_demand and watcher.stopped:
+                    need_on_demand = True
                 watcher.manage_processes()
+            if need_on_demand:
+                 (rlist, wlist, xlist) = select.select([x.fileno() for x in self.sockets.values()], [], [], 0)
+                 if rlist:
+                     self.socket_event = True
+                     self.start_watchers()
+                     self.socket_event = False
+
 
     @debuglog
     def reload(self, graceful=True):
@@ -455,7 +473,7 @@ class Arbiter(object):
         # gracefully reload watchers
         for watcher in self.iter_watchers():
             watcher.reload(graceful=graceful)
-            time.sleep(self.warmup_delay)
+            sleep(self.warmup_delay)
 
     def numprocesses(self):
         """Return the number of processes running across all watchers."""
@@ -513,7 +531,7 @@ class Arbiter(object):
     def start_watchers(self):
         for watcher in self.iter_watchers():
             watcher.start()
-            time.sleep(self.warmup_delay)
+            sleep(self.warmup_delay)
 
     def stop_watchers(self, stop_alive=False):
         if not self.alive:
@@ -544,6 +562,6 @@ class ThreadedArbiter(Arbiter, Thread):
         return Arbiter.start(self)
 
     def stop(self):
-        Arbiter.stop(self)
+        self.loop.add_callback(self._stop)
         if get_ident() != self.ident:
             self.join()

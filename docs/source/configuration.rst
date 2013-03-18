@@ -17,9 +17,9 @@ Example::
     warmup_delay = 0
     numprocesses = 5
 
-	[env:myprogram]
-	PATH = $PATH:/bin
-	CAKE = lie
+    [env:myprogram]
+    PATH = $PATH:/bin
+    CAKE = lie
 
     # hook
     hooks.before_start = my.hooks.control_redis
@@ -84,12 +84,6 @@ circus - single section
         If set to False, the processes handled by a watcher will not be
         respawned automatically. (default: True)
 
-.. note::
-
-   If you use the gevent backend for **stream_backend**, you need to install the
-   forked version of gevent_zmq that's located at
-   https://github.com/tarekziade/gevent-zeromq because it contains a fix that has
-   not made it upstream yet.
 
 
 watcher:NAME - as many sections as you want
@@ -123,6 +117,11 @@ watcher:NAME - as many sections as you want
         (Default: False)
     **warmup_delay**
         The delay (in seconds) between running processes.
+    **autostart**
+        If set to true, the watcher will not be started automatically
+        when the arbiter starts. The watcher can be started explicitly
+        (example: `circusctrl start myprogram`).
+	(Default: True)
     **numprocesses**
         The number of processes to run for this watcher.
     **rlimit_LIMIT**
@@ -137,11 +136,12 @@ watcher:NAME - as many sections as you want
         will receive the **stderr** stream of all processes in its
         :func:`__call__` method.
 
-        Circus provides three classes you can use without prefix:
+        Circus provides some stream classes you can use without prefix:
 
         - :class:`FileStream`: writes in a file
         - :class:`QueueStream`: write in a memory Queue
         - :class:`StdoutStream`: writes in the stdout
+        - :class:`FancyStdoutStream`: writes colored output with time prefixes in the stdout
 
     **stderr_stream.***
         All options starting with *stderr_stream.* other than *class* will
@@ -151,11 +151,13 @@ watcher:NAME - as many sections as you want
         A fully qualified Python class name that will be instanciated, and
         will receive the **stdout** stream of all processes in its
         :func:`__call__` method.
-        Circus provides three classes you can use without prefix:
+
+        Circus provides soem stream classes you can use without prefix:
 
         - :class:`FileStream`: writes in a file
         - :class:`QueueStream`: write in a memory Queue
         - :class:`StdoutStream`: writes in the stdout
+        - :class:`FancyStdoutStream`: writes colored output with time prefixes in the stdout
 
     **stdout_stream.***
         All options starting with *stdout_stream.* other than *class* will
@@ -169,6 +171,7 @@ watcher:NAME - as many sections as you want
     **max_retry**
         The number of times we attempt to start a process, before
         we abandon and stop the whole watcher. Defaults to 5.
+        Set to -1 to disable max_retry and retry indefinitely.
 
     **priority**
         Integer that defines a priority for the watcher. When the
@@ -195,6 +198,11 @@ watcher:NAME - as many sections as you want
         If max_age is set then the process will live between max_age and
         max_age + random(0, max_age_variance) seconds. This avoids restarting
         all processes for a watcher at once. Defaults to 30 seconds.
+
+    **on_demand**
+        If set to True, the processes will be started only after the first
+        connection to one of the configured sockets (see below). If a restart
+        is needed, it will be only triggered at the next socket event.
 
     **hooks.***
         Available hooks: **before_start**, **after_start**, **before_stop**, **after_stop**
@@ -231,6 +239,10 @@ socket:NAME - as many sections as you want
         When provided a path to a file that will be used as a unix socket
         file. If a path is provided, **family** is forced to AF_UNIX and
         **host** and **port** are ignored.
+    **umask**
+        When provided, sets the umask that will be used to create an
+        AF_UNIX socket. For example, `umask=000` will produce a socket with
+        permission `777`.
 
 
 Once a socket is created, the *${circus.sockets.NAME}* string can be used in the
@@ -275,16 +287,16 @@ Example::
 
 	[watcher:worker1]
 	cmd = ping 127.0.0.1
-	
+
 	[watcher:worker2]
 	cmd = ping 127.0.0.1
-	
+
 	[env:worker1,worker2]
 	PATH = /bin
-	
+
 	[env:worker1]
 	PATH = $PATH
-	
+
 	[env:worker2]
 	CAKE = lie
 

@@ -13,9 +13,20 @@ Or download the archive on PyPI, extract and install it manually with::
 
 If you want to try out Circus, see the :ref:`examples`.
 
-If you are using debian or any debian based distributoin, you also can use the
+If you are using debian or any debian based distribution, you also can use the
 ppa to install circus, it's at
 https://launchpad.net/~roman-imankulov/+archive/circus
+
+
+zc.buildout
+===========
+
+We provide a `zc.buildout <http://www.buildout.org/>`_ configuration, you can
+use it by simply running the bootstrap script, then calling buildout::
+
+    $ python bootstrap.py
+    $ bin/buildout
+
 
 More on Requirements
 ====================
@@ -38,18 +49,6 @@ of those libraries pulled for you::
     $ pip install -r pip-requirements.txt
 
 
-If you want to run the Web console you will need more things:
+If you want to run the Web console you will need to install **circus-web**::
 
-- Mako 0.7.0
-- MarkupSafe 0.15
-- bottle 0.10.9
-- anyjson 0.3.1
-- gevent 0.13.7
-- gevent-socketio 0.3.5-beta
-- gevent-websocket 0.3.6
-- greenlet 0.3.4
-- beaker 1.6.3
-
-Those can be installed with::
-
-    $ pip install -r web-requirements.txt
+    $ pip install circus-web

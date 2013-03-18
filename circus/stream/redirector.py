@@ -1,9 +1,9 @@
 import fcntl
 import errno
 import os
-import select
 import sys
-import time
+
+from zmq.eventloop import ioloop
 
 
 class NamedPipe(object):
@@ -23,9 +23,9 @@ class NamedPipe(object):
         return self.pipe.read(buffer)
 
 
-class BaseRedirector(object):
-    def __init__(self, redirect, refresh_time=0.3, extra_info=None,
-                 buffer=1024, selector=None):
+class Redirector(object):
+    def __init__(self, redirect, refresh_time=1.0, extra_info=None,
+                 buffer=1024, loop=None):
         self.pipes = []
         self._names = {}
         self.redirect = redirect
@@ -35,10 +35,19 @@ class BaseRedirector(object):
         if extra_info is None:
             extra_info = {}
         self.extra_info = extra_info
-        if selector is None:
-            selector = select.select
-        self.selector = selector
-        self.refresh_time = refresh_time
+        self.refresh_time = refresh_time * 1000
+        self.loop = loop or ioloop.IOLoop.instance()
+        self.caller = None
+
+    def start(self):
+        self.caller = ioloop.PeriodicCallback(self._select, self.refresh_time,
+                                              self.loop)
+        self.caller.start()
+
+    def kill(self):
+        if self.caller is None:
+            return
+        self.caller.stop()
 
     def add_redirection(self, name, process, pipe):
         npipe = NamedPipe(pipe, process, name)
@@ -55,16 +64,12 @@ class BaseRedirector(object):
 
     def _select(self):
         if len(self.pipes) == 0:
-            time.sleep(.1)
             return
 
+        # we just try to read, if we see some data
+        # we just redirect it.
         try:
-            try:
-                rlist, __, __ = self.selector(self.pipes, [], [], 1.0)
-            except select.error:     # need a non specific error
-                return
-
-            for pipe in rlist:
+            for pipe in self.pipes:
                 data = pipe.read(self.buffer)
                 if data:
                     datamap = {'data': data, 'pid': pipe.process.pid,

@@ -25,11 +25,9 @@ The Web Console lets you:
 
    By default, this option is not activated.
 
-The web console needs a few dependencies that you can install them using the
-web-requirements.txt file. Additionally, you will need to have gevent (and thus
-libevent) installed on your system to make this working::
+The web console is its own package, you need to install::
 
-    $ bin/pip install -r web-requirements.txt
+    $ pip install circus-web
 
 To enable the console, add a few options in the Circus ini file::
 
@@ -122,7 +120,7 @@ Then add a new *watcher* and a *socket* sections in your ini file::
     use_sockets = 1
 
     [socket:webconsole]
-    host = 127.0.0.0
+    host = 127.0.0.1
     port = 8080
 
 That's it !
@@ -152,10 +150,10 @@ Example::
 
 If you want more configuration options, see http://wiki.nginx.org/HttpProxyModule.
 
-Websockets in Nginx (v1.2.5) is currently unsupported, although it will be 
+Websockets in Nginx (v1.2.5) is currently unsupported, although it will be
 implemented in 1.3. To receive real-time statuses and graphs in the web console,
 you need to use a websocket-compatible proxy like Varnish or HAProxy. In Varnish,
-two backends can be defined: one for serving the web console and one for the 
+two backends can be defined: one for serving the web console and one for the
 handling the socket connections.
 
 Example::
@@ -189,6 +187,60 @@ Example::
 Here, web console requests are bound to port 8001, and Nginx should be configured to
 listen on that port. Websocket connections are upgraded and piped directly to the
 circushttpd process listening on port 8080.
+
+
+Running behind Nginx >= 1.3.13
+==============================
+
+
+As of `Nginx>=1.3.13 <http://nginx.com/news/nginx-websockets.html>`_
+websockets are supported by the web server. With Nginx>=1.3.13 there is no
+longer a need to reroute websocket traffic via Varnish or HAProxy.
+
+On Ubuntu you can install Nginx>=1.3.13 from Chris Lea's development branch
+`PPA <https://launchpad.net/~chris-lea/+archive/nginx-devel>`_, as so:
+
+.. code-block:: sh
+
+   sudo apt-get install python-software-properties
+   sudo add-apt-repository ppa:chris-lea/nginx-devel
+   sudo apt-get update
+   sudo apt-get install nginx
+   nginx -v
+
+An example Nginx config with websocket support:
+
+.. code-block:: ini
+
+
+   # /etc/nginx/sites-enabled/default
+
+   upstream circusweb_server {
+     server localhost:8080;
+   }
+
+   server {
+    listen   80;
+    server_name  _;
+
+    location / {
+      proxy_pass http://circusweb_server;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto http;
+      proxy_redirect off;
+     }
+
+    location ~/media/\*(.png|.jpg|.css|.js|.ico)$ {
+      alias /path_to_site-packages/circusweb/media/;
+     }
+   }
+
+
 
 Password-protect circushttpd
 ============================
@@ -247,3 +299,5 @@ existing. A few tools are at your disposal to ease the process:
 The :class:`StatsNamespace` class is responsible for managing
 the websocket communication on the server side. Its documentation should help
 you to understand what it does.
+
+

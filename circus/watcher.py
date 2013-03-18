@@ -8,6 +8,7 @@ from random import randint
 
 from psutil import NoSuchProcess
 from zmq.utils.jsonapi import jsonmod as json
+from zmq.eventloop import ioloop
 
 from circus.process import Process, DEAD_OR_ZOMBIE, UNEXISTING
 from circus import logger
@@ -104,10 +105,6 @@ class Watcher(object):
       - **name** - the stream name (*stderr* or *stdout*)
       - **data** - the data
 
-    - **stream_backend** -- the backend that will be used for the streaming
-      process. Can be *thread* or *gevent*. When set to *gevent* you need
-      to have *gevent* and *gevent_zmq* installed. (default: thread)
-
     - **priority** -- integer that defines a priority for the watcher. When
       the Arbiter do some operations on all watchers, it will sort them
       with this field, from the bigger number to the smallest.
@@ -118,6 +115,10 @@ class Watcher(object):
 
     - **use_sockets** -- If True, the processes will inherit the file
       descriptors, thus can reuse the sockets opened by circusd.
+      (default: False)
+
+    - **on_demand** -- If True, the processes will be started only
+      at the first connection to the socket
       (default: False)
 
     - **copy_env** -- If True, the environment in which circus is running
@@ -156,12 +157,13 @@ class Watcher(object):
                  gid=None, send_hup=False, env=None, stopped=True,
                  graceful_timeout=30., prereload_fn=None,
                  rlimits=None, executable=None, stdout_stream=None,
-                 stderr_stream=None, stream_backend='thread', priority=0,
+                 stderr_stream=None, priority=0, loop=None,
                  singleton=False, use_sockets=False, copy_env=False,
                  copy_path=False, max_age=0, max_age_variance=30,
-                 hooks=None, respawn=True, **options):
+                 hooks=None, respawn=True, autostart=True, on_demand=False, **options):
         self.name = name
         self.use_sockets = use_sockets
+        self.on_demand = on_demand
         self.res_name = name.lower().replace(" ", "_")
         self.numprocesses = int(numprocesses)
         self.warmup_delay = warmup_delay
@@ -172,7 +174,6 @@ class Watcher(object):
         self.graceful_timeout = float(graceful_timeout)
         self.prereload_fn = prereload_fn
         self.executable = None
-        self.stream_backend = stream_backend
         self.priority = priority
         self.stdout_stream_conf = copy.copy(stdout_stream)
         self.stderr_stream_conf = copy.copy(stderr_stream)
@@ -189,6 +190,8 @@ class Watcher(object):
         self.ignore_hook_failure = ['before_stop', 'after_stop']
         self.hooks = self._resolve_hooks(hooks)
         self.respawn = respawn
+        self.autostart = autostart
+        self.loop = loop or ioloop.IOLoop.instance()
 
         if singleton and self.numprocesses not in (0, 1):
             raise ValueError("Cannot have %d processes with a singleton "
@@ -198,7 +201,7 @@ class Watcher(object):
                           "uid", "gid", "send_hup", "shell", "env",
                           "max_retry", "cmd", "args", "graceful_timeout",
                           "executable", "use_sockets", "priority", "copy_env",
-                          "singleton", "stdout_stream_conf",
+                          "singleton", "stdout_stream_conf", "on_demand",
                           "stderr_stream_conf", "max_age", "max_age_variance")
                          + tuple(options.keys()))
 
@@ -236,7 +239,7 @@ class Watcher(object):
                     self.stdout_redirector.running):
                 self.stdout_redirector.kill()
             self.stdout_redirector = get_pipe_redirector(
-                self.stdout_stream, backend=self.stream_backend)
+                self.stdout_stream, loop=self.loop)
         else:
             self.stdout_redirector = None
 
@@ -246,7 +249,7 @@ class Watcher(object):
                 self.stderr_redirector.kill()
 
             self.stderr_redirector = get_pipe_redirector(
-                self.stderr_stream, backend=self.stream_backend)
+                self.stderr_stream, loop=self.loop)
         else:
             self.stderr_redirector = None
 
@@ -407,6 +410,10 @@ class Watcher(object):
     def spawn_processes(self):
         """Spawn processes.
         """
+        # when an on_demand process dies, do not restart it until the next event
+        if self.on_demand and not self.arbiter.socket_event:
+            self.stopped = True
+            return
         for i in range(self.numprocesses - len(self.processes)):
             self.spawn_process()
             time.sleep(self.warmup_delay)
@@ -429,7 +436,7 @@ class Watcher(object):
         cmd = util.replace_gnu_args(self.cmd, sockets=self._get_sockets_fds())
         self._process_counter += 1
         nb_tries = 0
-        while nb_tries < self.max_retry:
+        while nb_tries < self.max_retry or self.max_retry == -1:
             process = None
             try:
                 process = Process(self._process_counter, cmd,
@@ -563,7 +570,6 @@ class Watcher(object):
         """Stop.
         """
         logger.debug('stopping the %s watcher' % self.name)
-
         # stop redirectors
         if self.stdout_redirector is not None:
             self.stdout_redirector.kill()
@@ -581,10 +587,6 @@ class Watcher(object):
 
         while self.get_active_processes() and time.time() < limit:
             self.kill_processes(signal.SIGTERM)
-            try:
-                time.sleep(0.1)
-            except KeyboardInterrupt:
-                pass
             self.reap_processes()
 
         self.kill_processes(signal.SIGKILL)
@@ -635,6 +637,9 @@ class Watcher(object):
         """Start.
         """
         if not self.stopped:
+            return
+
+        if self.on_demand and not self.arbiter.socket_event:
             return
 
         self.stopped = False

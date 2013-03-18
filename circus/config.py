@@ -1,11 +1,15 @@
 import os
 import fnmatch
 import sys
-import warnings
 
 from circus import logger
 from circus.util import (DEFAULT_ENDPOINT_DEALER, DEFAULT_ENDPOINT_SUB,
                          StrictConfigParser, parse_env_str)
+try:
+    import gevent       # NOQA
+    DEFAULT_STREAM = 'gevent'
+except ImportError:
+    DEFAULT_STREAM = 'thread'
 
 
 def watcher_defaults():
@@ -32,7 +36,8 @@ def watcher_defaults():
         'copy_env': False,
         'copy_path': False,
         'hooks': dict(),
-        'respawn': True}
+        'respawn': True,
+        'autostart': True}
 
 
 _BOOL_STATES = {'1': True, 'yes': True, 'true': True, 'on': True,
@@ -122,35 +127,6 @@ def get_config(config_file):
     config['httpd_host'] = dget('circus', 'httpd_host', 'localhost', str)
     config['httpd_port'] = dget('circus', 'httpd_port', 8080, int)
     config['debug'] = dget('circus', 'debug', False, bool)
-    stream_backend = dget('circus', 'stream_backend', 'thread')
-    if stream_backend == 'gevent':
-        try:
-            import gevent           # NOQA
-        except ImportError:
-            sys.stderr.write("stream_backend set to gevent, " +
-                             "but gevent isn't installed\n")
-            sys.stderr.write("Exiting...\n")
-            sys.exit(1)
-
-        from gevent import monkey
-        monkey.patch_all()
-
-        try:
-            import zmq.green as zmq         # NOQA
-        except ImportError:
-            try:
-                from gevent_zeromq import monkey_patch
-            except ImportError:
-                sys.stderr.write("stream_backend set to gevent, but " +
-                                 "but required PyZMQ >= 2.2.0.1 not found\n")
-                sys.stderr.write("Exiting...\n")
-                sys.exit(1)
-
-            monkey_patch()
-            warnings.warn("gevent_zeromq is deprecated, please "
-                          "use PyZMQ >= 2.2.0.1")
-
-    config['stream_backend'] = stream_backend
 
     # Initialize watchers, plugins & sockets to manage
     watchers = []
@@ -220,8 +196,6 @@ def get_config(config_file):
                 elif opt == 'singleton':
                     watcher['singleton'] = dget(section, "singleton", False,
                                                 bool)
-                elif opt == 'stream_backend':
-                    watcher['stream_backend'] = val
                 elif opt == 'copy_env':
                     watcher['copy_env'] = dget(section, "copy_env", False,
                                                bool)
@@ -246,13 +220,13 @@ def get_config(config_file):
                                    'env sections is recommended')
                     watcher['env'] = parse_env_str(val)
 
+                elif opt == 'autostart':
+                    watcher['autostart'] = dget(section, "autostart", True,
+                                                bool)
                 else:
                     # freeform
                     watcher[opt] = val
 
-            # set the stream backend
-            if 'stream_backend' not in watcher:
-                watcher['stream_backend'] = stream_backend
             watchers.append(watcher)
 
         if section.startswith('env:'):

@@ -22,7 +22,6 @@ class StatsClient(CircusConsumer):
     def iter_messages(self):
         """ Yields tuples of (watcher, subtopic, stat)"""
         recv = self.pubsub_socket.recv_multipart
-
         with self:
             while True:
                 try:
@@ -32,7 +31,6 @@ class StatsClient(CircusConsumer):
                         continue
 
                 if len(events) == 0:
-                    print 'nothing'
                     continue
 
                 try:
